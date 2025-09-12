@@ -1,0 +1,231 @@
+# Recreate and save after kernel reset
+html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MfgCalc • Factory Physics VUT / Little's Law Calculator</title>
+<meta name="description" content="Factory Physics calculator using the VUT (Kingman) approximation and Little's Law. Compute queueing time, cycle time, WIP, utilization, and throughput.">
+<style>
+  :root{
+    --blue:#0A3D91;
+    --orange:#FF6B00;
+    --steel:#4A4A4A;
+    --light:#E5E5E5;
+    --bg:#f7f9fc;
+    --radius:16px;
+  }
+  html,body{margin:0;padding:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;color:#111}
+  .wrap{max-width:980px;margin:32px auto;padding:20px}
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .mark{width:34px;height:34px;border-radius:8px;background:var(--blue);display:grid;place-items:center;color:#fff;font-weight:800}
+  .title{font-weight:800;color:var(--blue);font-size:clamp(20px,3.2vw,28px);letter-spacing:.2px}
+  .tag{color:var(--steel);font-size:13px;margin:2px 0 18px}
+  .card{background:#fff;border:1px solid var(--light);border-radius:var(--radius);padding:20px;box-shadow:0 2px 14px rgba(0,0,0,.05)}
+  h1{margin:0 0 8px;font-size:clamp(22px,3.4vw,30px);color:#111}
+  .sub{color:#444;margin-bottom:16px}
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  label{display:block;font-size:13px;margin-bottom:6px;color:var(--blue);font-weight:700}
+  input,select{width:100%;padding:12px;border:1px solid #d7d7d7;border-radius:12px;font-size:15px}
+  .row{display:flex;gap:10px;align-items:end}
+  .actions{margin-top:16px;display:flex;gap:10px;flex-wrap:wrap}
+  button{background:var(--blue);color:#fff;border:none;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer}
+  button.secondary{background:#e9eef7;color:#1a2a54}
+  .results{margin-top:18px;padding:14px;background:#fff;border:1px dashed var(--light);border-radius:12px}
+  .resrow{display:flex;justify-content:space-between;gap:10px;margin:6px 0}
+  .muted{font-size:12px;color:#666;margin-top:10px}
+  footer{margin-top:26px;color:#666;font-size:12px;text-align:center}
+  @media (max-width:720px){.grid{grid-template-columns:1fr} .row{flex-direction:column;align-items:stretch}}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <div class="mark">MC</div>
+      <div>
+        <div class="title">MfgCalc</div>
+        <div class="tag">A calculated approach to manufacturing.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h1>Factory Physics Queueing (VUT) & Little's Law</h1>
+      <div class="sub">Estimate average queueing time (Kingman VUT), cycle time, WIP, utilization, and throughput for a single process.</div>
+
+      <div class="grid">
+        <div class="row">
+          <div style="flex:1">
+            <label for="mode">Arrival Input</label>
+            <select id="mode">
+              <option value="rate">Arrival Rate (units/hr)</option>
+              <option value="ia">Interarrival Time (minutes between arrivals)</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <label id="lab-arr" for="arr">Arrival Rate (units/hr)</label>
+            <input id="arr" type="number" step="0.001" placeholder="e.g., 30">
+          </div>
+        </div>
+
+        <div class="row">
+          <div style="flex:1">
+            <label for="pt">Mean Process Time per Unit</label>
+            <input id="pt" type="number" step="0.001" placeholder="e.g., 1.5">
+          </div>
+          <div style="flex:1">
+            <label for="ptu">Process Time Units</label>
+            <select id="ptu">
+              <option value="min">minutes/unit</option>
+              <option value="sec">seconds/unit</option>
+              <option value="hr">hours/unit</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label for="ca">Arrival Variability (c<sub>a</sub>) — CoV of interarrival times</label>
+          <input id="ca" type="number" step="0.01" placeholder="e.g., 1.00 (Poisson)">
+        </div>
+        <div>
+          <label for="ce">Process Variability (c<sub>e</sub>) — CoV of effective process time</label>
+          <input id="ce" type="number" step="0.01" placeholder="e.g., 0.50">
+        </div>
+      </div>
+
+      <div class="actions">
+        <button onclick="calc()">Calculate</button>
+        <button class="secondary" onclick="resetCalc()">Reset</button>
+        <button class="secondary" onclick="downloadCSV()">Download CSV</button>
+      </div>
+
+      <div id="out" class="results" style="display:none"></div>
+      <div class="muted">
+        Uses the Kingman (VUT) approximation for G/G/1: <em>W<sub>q</sub> ≈ [(c<sub>a</sub>² + c<sub>e</sub>²)/2] · (u/(1−u)) · t<sub>e</sub></em>, where
+        u = λ·t<sub>e</sub>. Cycle time <em>CT = t<sub>e</sub> + W<sub>q</sub></em>. Little's Law: <em>WIP = λ · CT</em>. Throughput ≈ λ (stable system).
+      </div>
+    </div>
+
+    <footer>© 2025 MfgCalc • Factory Physics (VUT) Calculator • Brand colors: #0A3D91 / #FF6B00 • v1.0</footer>
+  </div>
+
+<script>
+  function toMinutes(val, units){
+    if(units==='sec') return val/60;
+    if(units==='hr') return val*60;
+    return val; // minutes
+  }
+  function calc(){
+    const mode = document.getElementById('mode').value;
+    const arrIn = +document.getElementById('arr').value||0;
+    const pt = +document.getElementById('pt').value||0;
+    const ptu = document.getElementById('ptu').value;
+    const ca = +document.getElementById('ca').value||0;
+    const ce = +document.getElementById('ce').value||0;
+
+    if(!arrIn || !pt){ alert('Please enter arrival and process time.'); return; }
+
+    // Convert inputs
+    const te_min = toMinutes(pt, ptu);         // mean process time in minutes/unit
+    const te_hr  = te_min/60;                  // hours/unit
+    let lambda_hr;                              // arrival rate in units/hr
+
+    if(mode==='rate'){
+      lambda_hr = arrIn;
+    } else { // interarrival minutes
+      const ia_min = arrIn;
+      lambda_hr = ia_min>0 ? 60/ia_min : 0;
+    }
+
+    // Server capacity (units/hr)
+    const mu_hr = te_hr>0 ? 1/te_hr : 0;
+
+    // For stability, we need lambda < mu. Compute utilization u = lambda*te_hr
+    const u = lambda_hr * te_hr;
+
+    if(u>=1){
+      alert('Utilization ≥ 1. The system is unstable. Reduce arrival rate or process time.');
+    }
+
+    // Kingman (VUT) waiting time in queue (minutes)
+    const V = (Math.pow(ca,2) + Math.pow(ce,2))/2;
+    const Wq_min = (u>=1)? Infinity : V * (u/(1-u)) * te_min;
+    // Cycle time
+    const CT_min = (Wq_min===Infinity)? Infinity : te_min + Wq_min;
+    // WIP (Little's Law) — use arrival rate in units/min
+    const lambda_min = lambda_hr/60;
+    const WIP = (CT_min===Infinity)? Infinity : lambda_min * CT_min;
+    // Throughput (stable system approximates arrival rate, else capped by capacity)
+    const TH_hr = (u<1)? lambda_hr : mu_hr;
+
+    function num(x, digits=2){
+      if(!isFinite(x)) return '—';
+      return Number(x.toFixed(digits)).toLocaleString();
+    }
+
+    const out = document.getElementById('out');
+    out.innerHTML = `
+      <div class="resrow"><span>Arrival Rate (λ)</span><strong>${num(lambda_hr,3)} units/hr</strong></div>
+      <div class="resrow"><span>Process Time (t<sub>e</sub>)</span><strong>${num(te_min,3)} min/unit</strong></div>
+      <div class="resrow"><span>Capacity (μ)</span><strong>${num(mu_hr,3)} units/hr</strong></div>
+      <div class="resrow"><span>Utilization (u = λ·t<sub>e</sub>)</span><strong>${num(u,3)}</strong></div>
+      <hr style="border:none;border-top:1px solid #eee;margin:10px 0">
+      <div class="resrow"><span>Waiting Time in Queue (W<sub>q</sub>)</span><strong>${num(Wq_min)} min</strong></div>
+      <div class="resrow"><span>Average Cycle Time (CT)</span><strong>${num(CT_min)} min</strong></div>
+      <div class="resrow"><span>Average WIP (Little's Law)</span><strong>${num(WIP)} units</strong></div>
+      <div class="resrow"><span>Throughput (TH)</span><strong>${num(TH_hr,3)} units/hr</strong></div>
+    `;
+    out.style.display='block';
+
+    window._mfgcalc_vut = {
+      mode, arrIn, pt, ptu, ca, ce,
+      lambda_hr, te_min, mu_hr, u, Wq_min, CT_min, WIP, TH_hr
+    };
+  }
+
+  function resetCalc(){
+    document.getElementById('mode').value='rate';
+    document.getElementById('lab-arr').innerText='Arrival Rate (units/hr)';
+    document.getElementById('arr').value='';
+    document.getElementById('pt').value='';
+    document.getElementById('ptu').value='min';
+    document.getElementById('ca').value='';
+    document.getElementById('ce').value='';
+    document.getElementById('out').style.display='none';
+  }
+
+  document.getElementById('mode').addEventListener('change', function(){
+    const lab = document.getElementById('lab-arr');
+    if(this.value==='rate') lab.innerText = 'Arrival Rate (units/hr)';
+    else lab.innerText = 'Interarrival Time (minutes between arrivals)';
+  });
+
+  function downloadCSV(){
+    if(!window._mfgcalc_vut){ alert('Calculate first.'); return; }
+    const d = window._mfgcalc_vut;
+    const rows = [
+      ['Field','Value','Units'],
+      ['Arrival input', d.arrIn, d.mode==='rate'?'units/hr':'min/arrival'],
+      ['Process time (te)', d.te_min, 'min/unit'],
+      ['Arrival rate (λ)', d.lambda_hr, 'units/hr'],
+      ['Capacity (μ)', d.mu_hr, 'units/hr'],
+      ['Utilization (u)', d.u, ''],
+      ['Wq (queue time)', d.Wq_min, 'min'],
+      ['CT (cycle time)', d.CT_min, 'min'],
+      ['WIP', d.WIP, 'units'],
+      ['Throughput (TH)', d.TH_hr, 'units/hr'],
+      ['ca (CoV arrivals)', d.ca || document.getElementById('ca').value || '', ''],
+      ['ce (CoV process)', d.ce || document.getElementById('ce').value || '', '']
+    ];
+    const csv = rows.map(r=>r.map(x=>String(x)).join(',')).join('\n');
+    const blob = new Blob([csv],{type:'text/csv'});
+    const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='mfgcalc_factory_physics_vut.csv'; a.click();
+  }
+</script>
+</body>
+</html>
+"""
+path = "/mnt/data/mfgcalc_factory_physics_vut.html"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(html)
+
+path
